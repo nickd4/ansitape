@@ -33,6 +33,8 @@ CCOPT	= -g -Wno-implicit-int -Wno-implicit-function-declaration
 # Define this if you want to handle IBM EBCDIC tapes.
 IBM	= -DEBCDIC
 
+# Define this if you want to write SIMH simulated tape format.
+SIMH	= -DSIMH
 
 # Define this to be the maximum size of a file you are willing to
 # read to determine the record length.  Files smaller than this
@@ -71,7 +73,7 @@ FILECAT	= .
 all: ansitape man
 
 ansitape: ansitape.c ansitape.h tables.o
-	cc ${CCOPT} -o ansitape ${IBM} ${READMAX} ansitape.c tables.o
+	cc ${CCOPT} -o ansitape ${IBM} ${SIMH} ${READMAX} ansitape.c tables.o
 	#mv ansitape ${BIN}
 
 tables.o: tables.c

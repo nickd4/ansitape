@@ -95,6 +95,11 @@ FLAG            match();
 FLAG            eot();
 void            skip_past_marks(); /* Nick */
 
+#ifdef SIMH /* Nick */
+/* return values from getc_tape() */
+#define GETC_TAPE_MARK 0x100
+#define GETC_TAPE_EOF 0x101
+#endif
 
 
 char           *labels[] = {"", "HDR", "EOV", "EOF", ""};
@@ -153,6 +158,13 @@ struct tape_control_block {
     FLAG            eof;
     FLAG            _open;
     int             rw_mode;
+
+#ifdef SIMH /* Nick */
+    char            *read_buf;
+    int             read_buf_size;
+    int             read_buf_ptr;
+    int             read_buf_count;
+#endif
 }               tcb;
 
 
@@ -1154,18 +1166,26 @@ read_labels()
 
     l = read_tape((char *) &inhdr, sizeof(inhdr));
     if (l == 0)
+ {
+  fprintf(stderr, "END_OF_SET\n");
 	return END_OF_SET;
+ }
+ fprintf(stderr, "label \"%c%c%c\"\n", inhdr.header[0], inhdr.header[1], inhdr.header[2]);
 
     for (label_type = 1; label_type <= 4; label_type++)
 	if (strncmp(inhdr.header, labels[label_type], 3) == 0)
 	    break;
 
     if (label_type > 4)
+ {
+  fprintf(stderr, "label_type %d\n", label_type);
 	label_type = UNKNOWN_LABEL;
+ }
 
     for (; l; l = read_tape((char *) &inhdr, sizeof(inhdr))) {
 	if (label_type == UNKNOWN_LABEL || strncmp(inhdr.header, labels[label_type], 3) != 0)
 	    continue;
+ fprintf(stderr, "inhdr.seq '%c'\n", inhdr.seq);
 	switch (inhdr.seq) {
 	  case '1':
 	    downstring((char *) &inhdr, (char *) &hdr1, sizeof(hdr1));
@@ -1181,6 +1201,14 @@ read_labels()
 	};
     };
 
+ switch (label_type) {
+ case TOP_OF_FILE: fprintf(stderr, "TOP_OF_FILE\n"); break;
+ case END_OF_TAPE: fprintf(stderr, "END_OF_TAPE\n"); break;
+ case END_OF_FILE: fprintf(stderr, "END_OF_FILE\n"); break;
+ case END_OF_SET: fprintf(stderr, "END_OF_SET\n"); break;
+ case UNKNOWN_LABEL: fprintf(stderr, "UNKNOWN_LABEL\n"); break;
+ default: fprintf(stderr, "label_type %d\n", label_type); break;
+ }
     return label_type;
 }
 
@@ -1234,14 +1262,76 @@ read_tape(buffer, buflen)
 {
     int             inlen;
 
+#ifdef SIMH
+    inlen = 0;
+    while (inlen < buflen) {
+        int c = getc_tape();
+        if (c >= 0x100)
+            break;
+        buffer[inlen++] = c;
+    }
+#else
     inlen = read(tcb.fd, buffer, buflen);
+#endif
 #ifdef EBCDIC
     if (tcb.ebcdic)
 	to_ascii(buffer, buffer, inlen);
 #endif
 
+ fprintf(stderr, "inlen %08x\n", inlen);
     return inlen;
 }
+
+#ifdef SIMH
+getc_tape()
+{
+    int result;
+    int record_size;
+    int read_size;
+    unsigned char header[4];
+
+    if (tcb.read_buf_ptr >= tcb.read_buf_count) {
+        result = read(tcb.fd, header, 4);
+        if (result == -1) {
+            perror("read()");
+            exit(EXIT_FAILURE);
+        }
+        if (result != 4)
+            return GETC_TAPE_EOF;
+
+        record_size =
+            header[0] |
+            (header[1] << 8) |
+            (header[2] << 16) |
+            (header[3] << 24);
+ fprintf(stderr, "record_size %08x\n", record_size);
+        if (record_size == 0 || record_size >= 0x1000000)
+            return GETC_TAPE_MARK;
+
+        read_size = (record_size + 5) & ~1;
+        if (tcb.read_buf_size < read_size) {
+            free(tcb.read_buf);
+            tcb.read_buf = malloc(read_size);
+            if (tcb.read_buf == NULL) {
+                perror("malloc()");
+                exit(EXIT_FAILURE);
+            }
+            tcb.read_buf_size = read_size;
+        }
+        result = read(tcb.fd, tcb.read_buf, read_size);
+        if (result == -1) {
+            perror("read()");
+            exit(EXIT_FAILURE);
+        }
+        if (result != read_size)
+            return GETC_TAPE_EOF;
+
+        tcb.read_buf_ptr = 0;
+        tcb.read_buf_count = record_size;
+    }
+    return tcb.read_buf[tcb.read_buf_ptr++];
+}
+#endif
 
 
 /*
@@ -1253,6 +1343,16 @@ void /* Nick */
 skip_past_marks(count)
     int             count;
 {
+#ifdef SIMH
+    int i, c;
+
+    for (i = 0; i < count; ++i) {
+        while ((c = getc_tape()) < 0x100)
+            ;
+        if (c == GETC_TAPE_EOF)
+            break;
+    }
+#else
     int             i;
     static char     ignore[20];
 
@@ -1267,6 +1367,7 @@ skip_past_marks(count)
     };
 
     tape(MTFSF, 1);
+#endif
 }
 
 
