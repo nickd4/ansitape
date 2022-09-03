@@ -164,6 +164,7 @@ struct tape_control_block {
     int             read_buf_size;
     int             read_buf_ptr;
     int             read_buf_count;
+    FLAG            short_read;
 #endif
 }               tcb;
 
@@ -1240,14 +1241,40 @@ write_tape(buffer, buflen)
     int             buflen;
 {
     int             err;
+#ifdef SIMH
+    char            header[5];
+    int             count;
+#endif
 
 #ifdef EBCDIC
     if (tcb.ebcdic)
 	to_ebcdic(buffer, buffer, buflen);
 #endif
 
+#ifdef SIMH
+ fprintf(stderr, "buflen %08x\n", buflen);
+    if (buflen) {
+        header[0] = 0;
+        header[1] = (char)buflen;
+        header[2] = (char)(buflen >> 8);
+        header[3] = (char)(buflen >> 16);
+        header[4] = (char)(buflen >> 24);
+        err = write(tcb.fd, header + 1, 4);
+        if (err == -1)
+            return err;
+        err = write(tcb.fd, buffer, buflen);
+        if (err == -1)
+            return err;
+        count = (buflen & 1) + 4;
+        err = write(tcb.fd, header + 5 - count, count);
+        if (err == -1)
+            return err;
+    }
+    return buflen;
+#else
     err = write(tcb.fd, buffer, buflen);
     return err;
+#endif
 }
 
 
@@ -1263,6 +1290,12 @@ read_tape(buffer, buflen)
     int             inlen;
 
 #ifdef SIMH
+    /* if we had a short read last time, it indicates a tape mark */
+    if (tcb.short_read) {
+        tcb.short_read = 0;
+        return 0;
+    }
+
     inlen = 0;
     while (inlen < buflen) {
         int c = getc_tape();
@@ -1270,6 +1303,7 @@ read_tape(buffer, buflen)
             break;
         buffer[inlen++] = c;
     }
+    tcb.short_read = inlen >= 1 && inlen < buflen;
 #else
     inlen = read(tcb.fd, buffer, buflen);
 #endif
@@ -1377,11 +1411,26 @@ tape(op, count)
     int             op,
                     count;
 {
+#ifdef SIMH
+    static char header[4];
+
+    switch (op) {
+    case MTWEOF:
+ fprintf(stderr, "MTWEOF %d\n", count);
+        /* count = 1 eof, 2 eot -- ignore or we get 3 marks at eot */
+        write(tcb.fd, header, 4);
+        break;
+    default:
+        fprintf(stderr, "warning: ignored op %d\n", op);
+        break;
+    }
+#else
     struct mtop     mt;
 
     mt.mt_op = op;
     mt.mt_count = count;
     ioctl(tcb.fd, MTIOCTOP, &mt);
+#endif
 }
 
 
