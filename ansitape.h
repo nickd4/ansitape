@@ -25,6 +25,10 @@
 #define CC_IMPLIED ' '		/* Each record goes on a separate line
 				 * when printed */
 
+/* Nick */
+#define FREAD 0
+#define FWRITE 1
+
 /*
  * VOLUME 1 Describes the owner of and access to the volume. 
  */

@@ -36,9 +36,12 @@
 
 #define SYSID "UNIXTAPEV2.0"	/* version 2.0 patch level 0 */
 
+#include <errno.h> /* Nick */
 #include <stdio.h>
-#include <strings.h>
+#include <stdlib.h> /* Nick */
+#include <string.h> /* Nick s.h> */
 #include <ctype.h>
+#include <time.h> /* Nick */
 #include <sys/file.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -77,15 +80,20 @@ typedef unsigned char FLAG;	/* boolean values only */
 #define FALSE		'\000'
 
 
+#if 0 /* Nick */
 extern int      errno;
+#endif
 
 char           *upstring();
 char           *downstring();
 char           *tail();
+#if 0 /* Nick */
 char           *malloc();
 char           *alloca();
+#endif
 FLAG            match();
 FLAG            eot();
+void            skip_past_marks(); /* Nick */
 
 
 
@@ -143,7 +151,7 @@ struct tape_control_block {
     int             char_count;
     int             next;
     FLAG            eof;
-    FLAG            open;
+    FLAG            _open;
     int             rw_mode;
 }               tcb;
 
@@ -628,7 +636,7 @@ read_file()
     else
 	fp = stdout;
 
-    while ((reclen = ansi_read(record, max_reclen)) != NULL) {
+    while ((reclen = ansi_read(record, max_reclen)) != 0) { /* Nick NULL */
 	fwrite(record, sizeof(char), reclen, fp);
     };
     if (!flag_stdio)
@@ -677,7 +685,7 @@ ansi_open(mode)
     };
 
     if (err != UNKNOWN_LABEL) {
-	tcb.open = TRUE;
+	tcb._open = TRUE;
 	tcb.eof = FALSE;
 	tcb.rw_mode = mode;
 	tcb.blk_count = 0;
@@ -704,8 +712,8 @@ int             bufl;
     int             read_min,
                     read_count;
 
-    if (tcb.eof || !tcb.open)
-	return NULL;
+    if (tcb.eof || !tcb._open)
+	return 0; /* Nick NULL; */
 
     read_min = (tcb.rec_format == REC_VARIABLE) ? 4
 	: tcb.rec_size;
@@ -727,7 +735,7 @@ int             bufl;
     };
 
     if (tcb.eof)
-	return NULL;
+	return 0; /* Nick NULL; */
 
     read_count = 0;
     for (; bufl && read_count < read_min && !tcb.eof;) {
@@ -756,7 +764,7 @@ try:
     if (tcb.eof)
 	return END_OF_FILE;
 
-    if (tcb.buffer && tcb.open) {
+    if (tcb.buffer && tcb._open) {
 	if (tcb.char_count <= tcb.next) {
 	    tcb.next = 0;
 	    tcb.char_count = read_tape(tcb.buffer, tcb.blk_size);
@@ -774,12 +782,12 @@ try:
 
 do_eof:
     tcb.eof = TRUE;
-    tcb.open = FALSE;
+    tcb._open = FALSE;
     err = read_labels();
     if (err == END_OF_TAPE) {
 	next_volume();
 	tcb.eof = FALSE;
-	tcb.open = TRUE;
+	tcb._open = TRUE;
     };
     goto try;
 }
@@ -796,7 +804,7 @@ ansi_write(rec, len)
 int             len;
 {
     int             overhead = 0;
-    char            scratch[10];
+    char            scratch[20]; /* Nick 10]; */
 
     if (!tcb.buffer) {
 	tcb.buffer = malloc(tcb.blk_size);
@@ -851,7 +859,7 @@ ansi_close()
 {
     int             err;
 
-    if (!tcb.open)
+    if (!tcb._open)
 	return 0;
 
     if (tcb.rw_mode == FWRITE) {
@@ -878,7 +886,7 @@ ansi_close()
     scan_labels();
 
 closed:
-    tcb.eof = tcb.open = FALSE;
+    tcb.eof = tcb._open = FALSE;
     if (tcb.buffer)
 	free(tcb.buffer);
     tcb.buffer = 0;
@@ -1003,7 +1011,7 @@ scan_labels()
 	   &tcb.file_count,
 	   &tcb.generation,
 	   &tcb.genversion);
-    sscanf(hdr1.created, " %5d %5d%c%6d%17c",
+    sscanf(hdr1.created, " %5ld %5ld%c%6d%17c",
 	   &tcb.created,
 	   &tcb.expires,
 	   &tcb.file_access,
@@ -1241,6 +1249,7 @@ read_tape(buffer, buflen)
  * needed on anything but streaming drives. 
  */
 
+void /* Nick */
 skip_past_marks(count)
     int             count;
 {

@@ -25,9 +25,9 @@
 
 # Define AT MOST ONE of the following
 # Define this if you want debugging.
-#CCOPT	= -g
+CCOPT	= -g -Wno-implicit-int -Wno-implicit-function-declaration
 # Define this if you want compiler optimizations.
-CCOPT	= -O
+#CCOPT	= -O -Wno-implicit-int -Wno-implicit-function-declaration
 
 
 # Define this if you want to handle IBM EBCDIC tapes.
@@ -51,33 +51,40 @@ BIN	= /usr/local/bin
 
 # This is the directory where you put your
 # unformatted manual pages for commands.
-CMDMAN	= /usr/man/man1
+CMDMAN	= .
+#/usr/man/man1
 
 # This is the directory where you put your
 # unformatted manual pages for file formats.
-FILEMAN	= /usr/man/man5
+FILEMAN	= .
+#/usr/man/man5
 
 # This is the directory where you put your
 # FORMATTED manual pages for file formats.
 # Define this to be /tmp if you don't keep
 # formatted copies of the file format manual pages.
 # Cron should clean it out eventually.
-FILECAT	= /usr/man/cat5
+FILECAT	= .
+#/usr/man/cat5
 
 
 all: ansitape man
 
 ansitape: ansitape.c ansitape.h tables.o
 	cc ${CCOPT} -o ansitape ${IBM} ${READMAX} ansitape.c tables.o
-	mv ansitape ${BIN}
+	#mv ansitape ${BIN}
 
 tables.o: tables.c
+	cc ${CCOPT} -c $<
 
 man: man1 man5
 
 man1: ansitape.1
-	cp ansitape.1 ${CMDMAN}
+	#cp ansitape.1 ${CMDMAN}
 
 man5: ansitape.5.tbl
 	tbl ansitape.5.tbl > ${FILEMAN}/ansitape.5
 	tbl ansitape.5.tbl | nroff -man | colcrt > ${FILECAT}/ansitape.5
+
+clean:
+	rm -f *.o ansitape ansitape.5
