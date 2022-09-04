@@ -95,12 +95,6 @@ FLAG            match();
 FLAG            eot();
 void            skip_past_marks(); /* Nick */
 
-#ifdef SIMH /* Nick */
-/* return values from getc_tape() */
-#define GETC_TAPE_MARK 0x100
-#define GETC_TAPE_EOF 0x101
-#endif
-
 
 char           *labels[] = {"", "HDR", "EOV", "EOF", ""};
 #define TOP_OF_FILE	1
@@ -159,12 +153,10 @@ struct tape_control_block {
     FLAG            _open;
     int             rw_mode;
 
-#ifdef SIMH /* Nick */
-    char            *read_buf;
-    int             read_buf_size;
-    int             read_buf_ptr;
-    int             read_buf_count;
-    FLAG            short_read;
+#ifdef SIMH
+    /* Read into a dummy buffer to skip without lseek. */
+    char           *dummy;
+    int             dummy_size;
 #endif
 }               tcb;
 
@@ -1015,8 +1007,19 @@ mount_tape()
 
 scan_labels()
 {
+ fprintf(stderr, "hdr1 \"%s\"\n", (char *)&hdr1);
+ fprintf(stderr, "hdr2 \"%s\"\n", (char *)&hdr2);
+ fprintf(stderr, "hdr3 \"%s\"\n", (char *)&hdr3);
+ fprintf(stderr, "hdr4 \"%s\"\n", (char *)&hdr4);
+    *tcb.tape_filename2 = 0;
     sscanf((char *) &hdr4, "%*3c4%63c", tcb.tape_filename2);
 
+    *tcb.tape_filename1 = 0;
+    *tcb.set_name = 0;
+    tcb.reel_count = 0;
+    tcb.file_count = 0;
+    tcb.generation = 0;
+    tcb.genversion = 0;
     sscanf((char *) &hdr1, "%*3c1%17c%6c%4d%4d%4d%2d",
 	   tcb.tape_filename1,
 	   tcb.set_name,
@@ -1024,6 +1027,11 @@ scan_labels()
 	   &tcb.file_count,
 	   &tcb.generation,
 	   &tcb.genversion);
+    tcb.created = 0;
+    tcb.expires = 0;
+    tcb.file_access = 0;
+    tcb.blk_count = 0;
+    *tcb.tapesys = 0;
     sscanf(hdr1.created, " %5ld %5ld%c%6d%17c",
 	   &tcb.created,
 	   &tcb.expires,
@@ -1031,6 +1039,13 @@ scan_labels()
 	   &tcb.blk_count,
 	   tcb.tapesys);
 
+    tcb.rec_format = 0;
+    tcb.blk_size = 0;
+    tcb.rec_size = 0;
+    tcb.density = 0;
+    tcb.reel_switch = 0;
+    tcb.car_control = 0;
+    tcb.blk_offset = 0;
     sscanf((char *) &hdr2, "%*3c2%c%5d%5d%1d%1d%*19c%c%*15c%2d",
 	   &tcb.rec_format,
 	   &tcb.blk_size,
@@ -1039,6 +1054,17 @@ scan_labels()
 	   &tcb.reel_switch,
 	   &tcb.car_control,
 	   &tcb.blk_offset);
+ fprintf(stderr, "rec_format %d blk_size %d rec_size %d\n", tcb.rec_format, tcb.blk_size, tcb.rec_size);
+
+    /*
+     * standard states that rec_size is set to 0 if unknown or > 99999,
+     * we will apply same reasoning to blk_size and treat both as 0 if
+     * the hdr2 is missing (RT-11 PIP utility does not generate a hdr2)
+     */
+    if (tcb.blk_size == 0)
+        tcb.blk_size = 100000;
+    if (tcb.rec_size == 0)
+        tcb.rec_size = 100000;
 
     if (tcb.ibm_format && hdr2.recfmt == IBM_VARIABLE)
 	tcb.rec_format = REC_VARIABLE;
@@ -1290,83 +1316,65 @@ read_tape(buffer, buflen)
     int             inlen;
 
 #ifdef SIMH
-    /* if we had a short read last time, it indicates a tape mark */
-    if (tcb.short_read) {
-        tcb.short_read = 0;
-        return 0;
+    int             result;
+    char            header[4];
+    int             record_size;
+    int             read_size;
+
+    inlen = 0; /* default to EOF return */
+
+    result = read(tcb.fd, header, 4);
+    if (result == -1) {
+        perror("read()");
+        exit(EXIT_FAILURE);
+    }
+    if (result != 4)
+        goto done;
+
+    record_size =
+        header[0] |
+        (header[1] << 8) |
+        (header[2] << 16) |
+        (header[3] << 24);
+ fprintf(stderr, "record_size %08x\n", record_size);
+    if (record_size == 0 || record_size >= 0x1000000)
+        goto done;
+
+    read_size = buflen < record_size ? buflen : record_size;
+    inlen = read(tcb.fd, buffer, read_size);
+    if (inlen == -1) {
+        perror("read()");
+        exit(EXIT_FAILURE);
     }
 
-    inlen = 0;
-    while (inlen < buflen) {
-        int c = getc_tape();
-        if (c >= 0x100)
-            break;
-        buffer[inlen++] = c;
+    read_size = ((record_size + 5) & ~1) - inlen;
+    if (tcb.dummy_size < read_size) {
+        free(tcb.dummy);
+        tcb.dummy = malloc(read_size);
+        if (tcb.dummy == NULL) {
+            perror("malloc()");
+            exit(EXIT_FAILURE);
+        }
+        tcb.dummy_size = read_size;
     }
-    tcb.short_read = inlen >= 1 && inlen < buflen;
+    result = read(tcb.fd, tcb.dummy, read_size);
+    if (result == -1) {
+        perror("read()");
+        exit(EXIT_FAILURE);
+    }
+
+done:
 #else
     inlen = read(tcb.fd, buffer, buflen);
 #endif
+ fprintf(stderr, "inlen %08x\n", inlen);
 #ifdef EBCDIC
     if (tcb.ebcdic)
 	to_ascii(buffer, buffer, inlen);
 #endif
 
- fprintf(stderr, "inlen %08x\n", inlen);
     return inlen;
 }
-
-#ifdef SIMH
-getc_tape()
-{
-    int result;
-    int record_size;
-    int read_size;
-    unsigned char header[4];
-
-    if (tcb.read_buf_ptr >= tcb.read_buf_count) {
-        result = read(tcb.fd, header, 4);
-        if (result == -1) {
-            perror("read()");
-            exit(EXIT_FAILURE);
-        }
-        if (result != 4)
-            return GETC_TAPE_EOF;
-
-        record_size =
-            header[0] |
-            (header[1] << 8) |
-            (header[2] << 16) |
-            (header[3] << 24);
- fprintf(stderr, "record_size %08x\n", record_size);
-        if (record_size == 0 || record_size >= 0x1000000)
-            return GETC_TAPE_MARK;
-
-        read_size = (record_size + 5) & ~1;
-        if (tcb.read_buf_size < read_size) {
-            free(tcb.read_buf);
-            tcb.read_buf = malloc(read_size);
-            if (tcb.read_buf == NULL) {
-                perror("malloc()");
-                exit(EXIT_FAILURE);
-            }
-            tcb.read_buf_size = read_size;
-        }
-        result = read(tcb.fd, tcb.read_buf, read_size);
-        if (result == -1) {
-            perror("read()");
-            exit(EXIT_FAILURE);
-        }
-        if (result != read_size)
-            return GETC_TAPE_EOF;
-
-        tcb.read_buf_ptr = 0;
-        tcb.read_buf_count = record_size;
-    }
-    return tcb.read_buf[tcb.read_buf_ptr++];
-}
-#endif
-
 
 /*
  * Skip past some number of files on a tape drive. This isn't really
@@ -1378,14 +1386,12 @@ skip_past_marks(count)
     int             count;
 {
 #ifdef SIMH
-    int i, c;
+    int i;
+    char buffer;
 
-    for (i = 0; i < count; ++i) {
-        while ((c = getc_tape()) < 0x100)
+    for (i = 0; i < count; ++i)
+        while (read_tape(&buffer, 1))
             ;
-        if (c == GETC_TAPE_EOF)
-            break;
-    }
 #else
     int             i;
     static char     ignore[20];
@@ -1412,13 +1418,14 @@ tape(op, count)
                     count;
 {
 #ifdef SIMH
+    int i;
     static char header[4];
 
     switch (op) {
     case MTWEOF:
  fprintf(stderr, "MTWEOF %d\n", count);
-        /* count = 1 eof, 2 eot -- ignore or we get 3 marks at eot */
-        write(tcb.fd, header, 4);
+        for (i = 0; i < count; ++i)
+            write(tcb.fd, header, 4);
         break;
     default:
         fprintf(stderr, "warning: ignored op %d\n", op);
