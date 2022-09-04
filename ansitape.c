@@ -574,8 +574,13 @@ write_record(fp)
 
     if (tcb.rec_format == REC_FIXED) {
 	rl = fread(linebuf, sizeof(char), tcb.rec_size, fp);
+ fprintf(stderr, "rl %08x\n", rl);
 	if (rl == 0)
 	    return END_OF_FILE;
+#if 1 /* Nick */
+        bzero(linebuf + rl, tcb.rec_size - rl);
+        rl = tcb.rec_size;
+#endif
     } else {
 	/* format is variable-length records */
 	if (fgets(linebuf, tcb.rec_size, fp) == NULL)
@@ -1323,7 +1328,7 @@ read_tape(buffer, buflen)
     int             result;
     char            header[4];
     int             record_size;
-    int             read_size;
+    int             count;
 
     inlen = 0; /* default to EOF return */
 
@@ -1344,24 +1349,24 @@ read_tape(buffer, buflen)
     if (record_size == 0 || record_size >= 0x1000000)
         goto done;
 
-    read_size = buflen < record_size ? buflen : record_size;
-    inlen = read(tcb.fd, buffer, read_size);
+    count = buflen < record_size ? buflen : record_size;
+    inlen = read(tcb.fd, buffer, count);
     if (inlen == -1) {
         perror("read()");
         exit(EXIT_FAILURE);
     }
 
-    read_size = ((record_size + 5) & ~1) - inlen;
-    if (tcb.dummy_size < read_size) {
+    count = ((record_size + 5) & ~1) - inlen;
+    if (tcb.dummy_size < count) {
         free(tcb.dummy);
-        tcb.dummy = malloc(read_size);
+        tcb.dummy = malloc(count);
         if (tcb.dummy == NULL) {
             perror("malloc()");
             exit(EXIT_FAILURE);
         }
-        tcb.dummy_size = read_size;
+        tcb.dummy_size = count;
     }
-    result = read(tcb.fd, tcb.dummy, read_size);
+    result = read(tcb.fd, tcb.dummy, count);
     if (result == -1) {
         perror("read()");
         exit(EXIT_FAILURE);
