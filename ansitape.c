@@ -642,6 +642,7 @@ read_file()
 	fp = stdout;
 
     while ((reclen = ansi_read(record, max_reclen)) != 0) { /* Nick NULL */
+ fprintf(stderr, "reclen %08x\n", reclen);
 	fwrite(record, sizeof(char), reclen, fp);
     };
     if (!flag_stdio)
@@ -736,6 +737,7 @@ int             bufl;
 	rl[2] = ansi_getc();
 	rl[3] = ansi_getc();
 	rl[4] = '\0';
+ fprintf(stderr, "rl \"%s\"\n", rl);
 	read_min = atoi(rl) - 4;
     };
 
@@ -743,9 +745,11 @@ int             bufl;
 	return 0; /* Nick NULL; */
 
     read_count = 0;
-    for (; bufl && read_count < read_min && !tcb.eof;) {
-	*(bufp++) = ansi_getc();
-	bufl--, read_count++;
+    for (; bufl && read_count < read_min;) {
+	*bufp = ansi_getc();
+        if (tcb.eof)
+            break;
+	bufp++, bufl--, read_count++;
     };
 
     if (bufl && tcb.car_control == CC_IMPLIED) {
