@@ -130,7 +130,7 @@ struct tape_control_block {
     /* Stuff for an individual file. */
     char            tape_filename1[17];
     char            tape_filename2[63];
-    char            unix_filename[80];
+    char            unix_filename[81]; /* Nick 80]; */
     int             blk_size;
     int             rec_size;
     char            rec_format;
@@ -1016,6 +1016,11 @@ mount_tape()
 
 scan_labels()
 {
+#if 1 /* Nick */
+    int i, j;
+    char c;
+#endif
+
  fprintf(stderr, "hdr1 \"%s\"\n", (char *)&hdr1);
  fprintf(stderr, "hdr2 \"%s\"\n", (char *)&hdr2);
  fprintf(stderr, "hdr3 \"%s\"\n", (char *)&hdr3);
@@ -1083,7 +1088,16 @@ scan_labels()
 	    tcb.tape_filename1,
 	    tcb.tape_filename2);
 
+#if 1 /* Nick */
+    /* remove spaces from filename, needed for RT-11 6.3 filenames */
+    j = 0;
+    for (i = 0; i < 80 && (c = tcb.unix_filename[i]) != 0; ++i)
+        if (c != ' ')
+            tcb.unix_filename[j++] = c;
+    tcb.unix_filename[j] = 0;
+#else
     sscanf(tcb.unix_filename, "%80s", tcb.unix_filename);
+#endif
 
     return 0;
 }
